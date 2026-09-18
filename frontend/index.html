@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <title>GigProof — Social Security Eligibility Checker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         :root {
             --navy: #1a1a2e;
@@ -323,6 +324,7 @@
                 }
                 html += `<div class="day-count total"><span>Combined</span><span>${data.combinedDays} / 120 days</span></div>`;
                 html += `</div>`;
+                html += `<button id="downloadBtn" style="margin-top:20px; background: var(--accent);" onclick='downloadPDF(${JSON.stringify(data)})'>Download Evidence Pack (PDF)</button>`;
                 resultDiv.innerHTML = html;
             } catch (err) {
                 document.getElementById('result').innerHTML = 'Error: could not reach the server. Is sam local start-api running?';
@@ -331,6 +333,49 @@
                 btn.disabled = false;
                 btn.textContent = 'Check My Eligibility';
             }
+        }
+
+        function downloadPDF(data) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            doc.setFontSize(18);
+            doc.text("GigProof — Eligibility Summary", 20, 20);
+
+            doc.setFontSize(11);
+            doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, 30);
+
+            doc.setFontSize(13);
+            doc.text("Rule: Social Security (Central) Rules, 2026", 20, 45);
+            doc.setFontSize(10);
+            doc.text("Requires 90 qualifying days with one aggregator, or 120 combined across apps.", 20, 52);
+
+            doc.setFontSize(14);
+            doc.text(data.qualifies ? "Status: QUALIFIES" : "Status: NOT YET QUALIFIED", 20, 68);
+
+            doc.setFontSize(11);
+            doc.text(data.message, 20, 78);
+
+            let y = 95;
+            doc.setFontSize(13);
+            doc.text("Days per app:", 20, y);
+            y += 8;
+            doc.setFontSize(11);
+            for (const app in data.perAppDays) {
+                doc.text(`${app}: ${data.perAppDays[app]} days`, 25, y);
+                y += 7;
+            }
+            y += 3;
+            doc.setFontSize(12);
+            doc.text(`Combined: ${data.combinedDays} / 120 days`, 20, y);
+
+            y += 15;
+            doc.setFontSize(9);
+            doc.setTextColor(120);
+            doc.text("This is a prototype summary generated for personal reference.", 20, y);
+            doc.text("It is not an official government document and does not constitute legal advice.", 20, y + 5);
+
+            doc.save("gigproof-eligibility-summary.pdf");
         }
     </script>
 
