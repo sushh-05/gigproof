@@ -125,3 +125,5 @@ sam delete --stack-name gigproof-backend
 See the [AWS SAM developer guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html) for an introduction to SAM specification, the SAM CLI, and serverless application concepts.
 
 Next, you can use AWS Serverless Application Repository to deploy ready to use Apps that go beyond hello world samples and learn how authors developed their applications: [AWS Serverless Application Repository main page](https://aws.amazon.com/serverless/serverlessrepo/)
+
+GigProof's data model separates a worker's raw uploaded evidence from aggregate compliance statistics. We define this boundary as a Cedar policy: a worker can only view their own results, and even a compliance-reviewer role is explicitly forbidden from viewing raw documents — only aggregate counts. This protects sensitive financial/work data while still allowing oversight.

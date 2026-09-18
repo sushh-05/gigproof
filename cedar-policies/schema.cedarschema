@@ -1,0 +1,23 @@
+entity Worker;
+entity ComplianceReviewer;
+entity EligibilityResult {
+  owner_id: String
+};
+entity RawDocument {
+  owner_id: String
+};
+
+action ViewEligibilityResult appliesTo {
+  principal: [Worker],
+  resource: [EligibilityResult]
+};
+
+action ViewAggregateStats appliesTo {
+  principal: [ComplianceReviewer],
+  resource: [EligibilityResult]
+};
+
+action ViewRawDocuments appliesTo {
+  principal: [ComplianceReviewer],
+  resource: [RawDocument]
+};
