@@ -6,6 +6,8 @@
     <title>GigProof — Social Security Eligibility Checker</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         :root {
             --navy: #1a1a2e;
@@ -80,6 +82,13 @@
             font-size: 18px;
         }
 
+        #uploads .hint {
+            font-size: 12.5px;
+            color: #888;
+            margin-top: -8px;
+            margin-bottom: 16px;
+        }
+
         .app-row {
             display: flex;
             gap: 12px;
@@ -88,12 +97,13 @@
             padding: 12px;
             background: var(--bg);
             border-radius: 8px;
+            flex-wrap: wrap;
         }
 
         .app-row label {
             font-size: 13px;
             color: #666;
-            min-width: 20px;
+            min-width: 45px;
         }
 
         select,
@@ -110,7 +120,16 @@
 
         input[type="file"] {
             flex: 1;
+            min-width: 220px;
             background: white;
+        }
+
+        .file-count {
+            font-size: 12px;
+            color: var(--accent);
+            font-weight: 600;
+            margin-top: -6px;
+            margin-left: 57px;
         }
 
         button {
@@ -219,7 +238,9 @@
     </div>
 
     <div id="uploads">
-        <h3>Upload your screenshots</h3>
+        <h3>Upload your earnings history</h3>
+        <p class="hint">Upload screenshots, PDF statements, or Excel/CSV exports — you can select multiple files per
+            app.</p>
         <div class="app-row">
             <label>App 1</label>
             <select id="app1">
@@ -229,8 +250,10 @@
                 <option>Ola</option>
                 <option>Urban Company</option>
             </select>
-            <input type="file" id="file1" accept="image/*">
+            <input type="file" id="file1" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple
+                onchange="updateFileCount('file1','count1')">
         </div>
+        <div class="file-count" id="count1"></div>
         <div class="app-row">
             <label>App 2</label>
             <select id="app2">
@@ -240,8 +263,10 @@
                 <option>Ola</option>
                 <option>Urban Company</option>
             </select>
-            <input type="file" id="file2" accept="image/*">
+            <input type="file" id="file2" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple
+                onchange="updateFileCount('file2','count2')">
         </div>
+        <div class="file-count" id="count2"></div>
         <button id="checkBtn" onclick="checkEligibility()">Check My Eligibility</button>
     </div>
 
@@ -251,11 +276,77 @@
         advice.</footer>
 
     <script>
-        async function realExtractDates(appName, fileSelected) {
-            if (!fileSelected) return [];
-            const { data: { text } } = await Tesseract.recognize(fileSelected, 'eng');
-            console.log(`Raw OCR text for ${appName}:`, text);
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        function updateFileCount(inputId, labelId) {
+            const count = document.getElementById(inputId).files.length;
+            document.getElementById(labelId).textContent = count > 0 ? `${count} file(s) selected` : '';
+        }
+
+        // Dispatches to the right extractor based on file type, then parses dates out of whatever text comes back.
+        async function extractDatesFromFile(file, appName) {
+            const name = file.name.toLowerCase();
+            let text = '';
+
+            try {
+                if (file.type.startsWith('image/')) {
+                    const { data } = await Tesseract.recognize(file, 'eng');
+                    text = data.text;
+                } else if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+                    text = await extractTextFromPDF(file);
+                } else if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')) {
+                    text = await extractTextFromSpreadsheet(file);
+                } else {
+                    console.warn(`Unsupported file type, skipping: ${file.name}`);
+                    return [];
+                }
+            } catch (err) {
+                console.error(`Failed to read ${file.name}:`, err);
+                return [];
+            }
+
+            console.log(`Extracted text for ${appName} (${file.name}):`, text);
             return parseDatesFromText(text, appName);
+        }
+
+        async function extractTextFromPDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = '';
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                fullText += content.items.map(item => item.str).join(' ') + '\n';
+            }
+
+            // If there's barely any real text, this PDF is probably scanned images —
+            // render each page to a canvas and OCR it instead.
+            if (fullText.trim().length < 20) {
+                fullText = '';
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    const { data } = await Tesseract.recognize(canvas, 'eng');
+                    fullText += data.text + '\n';
+                }
+            }
+
+            return fullText;
+        }
+
+        async function extractTextFromSpreadsheet(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+            let fullText = '';
+            workbook.SheetNames.forEach(sheetName => {
+                fullText += XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]) + '\n';
+            });
+            return fullText;
         }
 
         function parseDatesFromText(text, appName) {
@@ -274,34 +365,43 @@
             return Array.from(found).map(date => ({ app: appName, date }));
         }
 
-        function showLoading() {
+        function showLoading(msg) {
             const resultDiv = document.getElementById('result');
             resultDiv.style.display = 'block';
             resultDiv.className = '';
-            resultDiv.innerHTML = `<div class="loading-text">Reading your screenshots… this can take 5–15 seconds.</div>`;
+            resultDiv.innerHTML = `<div class="loading-text">${msg}</div>`;
         }
 
         async function checkEligibility() {
             const app1 = document.getElementById('app1').value;
             const app2 = document.getElementById('app2').value;
-            const file1 = document.getElementById('file1').files[0];
-            const file2 = document.getElementById('file2').files[0];
+            const files1 = Array.from(document.getElementById('file1').files);
+            const files2 = Array.from(document.getElementById('file2').files);
 
-            if (!file1 && !file2) {
-                alert('Please upload at least one screenshot.');
+            if (files1.length === 0 && files2.length === 0) {
+                alert('Please upload at least one file.');
                 return;
             }
 
             const btn = document.getElementById('checkBtn');
             btn.disabled = true;
-            btn.textContent = 'Reading screenshots...';
-            showLoading();
+            btn.textContent = 'Reading files...';
 
             try {
-                let records = [
-                    ...(await realExtractDates(app1, file1)),
-                    ...(await realExtractDates(app2, file2))
-                ];
+                let records = [];
+                let done = 0;
+                const total = files1.length + files2.length;
+
+                for (const file of files1) {
+                    showLoading(`Reading file ${++done} of ${total}: ${file.name}`);
+                    records.push(...(await extractDatesFromFile(file, app1)));
+                }
+                for (const file of files2) {
+                    showLoading(`Reading file ${++done} of ${total}: ${file.name}`);
+                    records.push(...(await extractDatesFromFile(file, app2)));
+                }
+
+                showLoading('Calculating eligibility...');
 
                 const response = await fetch('http://127.0.0.1:3000/hello', {
                     method: 'POST',
@@ -312,7 +412,6 @@
 
                 const resultDiv = document.getElementById('result');
                 resultDiv.className = data.qualifies ? 'qualify-yes' : 'qualify-no';
-
                 const pct = Math.min(100, Math.round((data.combinedDays / 120) * 100));
 
                 let html = `<h3>${data.qualifies ? '✅ You qualify' : '⏳ Not yet qualified'}</h3>`;
@@ -338,24 +437,18 @@
         function downloadPDF(data) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
-
             doc.setFontSize(18);
             doc.text("GigProof — Eligibility Summary", 20, 20);
-
             doc.setFontSize(11);
             doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, 30);
-
             doc.setFontSize(13);
             doc.text("Rule: Social Security (Central) Rules, 2026", 20, 45);
             doc.setFontSize(10);
             doc.text("Requires 90 qualifying days with one aggregator, or 120 combined across apps.", 20, 52);
-
             doc.setFontSize(14);
             doc.text(data.qualifies ? "Status: QUALIFIES" : "Status: NOT YET QUALIFIED", 20, 68);
-
             doc.setFontSize(11);
             doc.text(data.message, 20, 78);
-
             let y = 95;
             doc.setFontSize(13);
             doc.text("Days per app:", 20, y);
@@ -368,13 +461,11 @@
             y += 3;
             doc.setFontSize(12);
             doc.text(`Combined: ${data.combinedDays} / 120 days`, 20, y);
-
             y += 15;
             doc.setFontSize(9);
             doc.setTextColor(120);
             doc.text("This is a prototype summary generated for personal reference.", 20, y);
             doc.text("It is not an official government document and does not constitute legal advice.", 20, y + 5);
-
             doc.save("gigproof-eligibility-summary.pdf");
         }
     </script>
